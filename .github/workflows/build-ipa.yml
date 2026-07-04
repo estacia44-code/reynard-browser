@@ -1,0 +1,55 @@
+name: Build Fixed Reynard IPA
+
+on:
+  workflow_dispatch: # 수동으로 빌드 시작 버튼을 누를 때 작동합니다.
+
+jobs:
+  build:
+    runs-on: macos-14 # 최신 Apple Silicon macOS 환경에서 빌드합니다.
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Homebrew
+        run: |
+          brew install ldid
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Apply Korean Typing Fix
+        run: |
+          # 한글 자모 분리 문제를 해결하기 위한 소스 코드 수정 (sed 사용)
+          sed -i '' 's/isVietnameseInputMode/isCJKInputMode/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/primaryLanguage && \[primaryLanguage hasPrefix:@"vi"\]/primaryLanguage \&\& ([primaryLanguage hasPrefix:@"vi"] || [primaryLanguage hasPrefix:@"ko"])/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/shouldUseVietnameseIMEPath/shouldUseCJKIMEPath/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/isVietnameseWordSeparator/isCJKWordSeparator/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          echo "Korean fix applied to patches."
+
+      - name: Update Gecko and Apply Patches
+        run: |
+          zsh tools/development/update-gecko.sh
+          zsh tools/development/apply-patches.sh
+
+      - name: Build Dependencies
+        run: |
+          zsh tools/development/build-idevice.sh
+
+      - name: Build Gecko Engine
+        run: |
+          zsh tools/development/build-gecko.sh
+
+      - name: Build App and Create IPA
+        run: |
+          # 임시 인증서로 사이닝하여 IPA 생성
+          zsh tools/release/create-ipa.sh
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-Fixed-IPA
+          path: dist/*.ipa
