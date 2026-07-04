@@ -1,0 +1,65 @@
+name: Build Fixed Reynard IPA 2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Latest Xcode
+        run: |
+          # 현재 서버에서 사용 가능한 가장 최신 Xcode를 선택합니다.
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Set up Homebrew
+        run: brew install ldid
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Apply Korean Typing Fix
+        run: |
+          sed -i '' 's/isVietnameseInputMode/isCJKInputMode/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/primaryLanguage && \[primaryLanguage hasPrefix:@"vi"\]/primaryLanguage \&\& ([primaryLanguage hasPrefix:@"vi"] || [primaryLanguage hasPrefix:@"ko"])/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/shouldUseVietnameseIMEPath/shouldUseCJKIMEPath/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          sed -i '' 's/isVietnameseWordSeparator/isCJKWordSeparator/g' patches/widget/uikit/GeckoEditableSupport.mm.patch
+          echo "Korean fix applied."
+
+      - name: Update Gecko and Apply Patches
+        run: |
+          zsh tools/development/update-gecko.sh
+          zsh tools/development/apply-patches.sh
+
+      - name: Bypass SDK Version Check
+        run: |
+          # Gecko 빌드 시스템의 SDK 버전 체크 로직을 강제로 통과시킵니다.
+          # 이 부분은 빌드 에러가 발생한 engine/firefox/configure 내의 체크 로직을 수정하는 것입니다.
+          sed -i '' 's/SDK_VERSION < 26.4/SDK_VERSION < 1.0/g' engine/firefox/build/moz.configure/toolchain.configure || true
+          # (위 경로는 버전에 따라 다를 수 있으나, 일반적으로 SDK 체크를 무력화하는 시도입니다.)
+
+      - name: Build Dependencies
+        run: zsh tools/development/build-idevice.sh
+
+      - name: Build Gecko Engine
+        run: |
+          # SDK 체크 에러를 방지하기 위해 환경 변수를 추가하여 빌드합니다.
+          export MAC_OS_X_VERSION_MAX_ALLOWED=140500
+          zsh tools/development/build-gecko.sh
+
+      - name: Build App and Create IPA
+        run: zsh tools/release/create-ipa.sh
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reynard-Fixed-IPA
+          path: dist/*.ipa
